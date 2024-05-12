@@ -7,13 +7,13 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 
-with open(HERE / 'ps3_update_dl' / '__init__.py') as f:
+with open(HERE / 'ps3_update_dl' / '__init__.py', encoding='utf8') as f:
 	VERSION = re.search(r'^__version__\s*=\s*[\'"]([^\'"]*)[\'"]', f.read(), re.MULTILINE).group(1)
 
 if not VERSION:
 	raise RuntimeError('version is not set')
 
-with open(HERE / 'README.md') as f:
+with open(HERE / 'README.md', encoding='utf8') as f:
 	README = f.read()
 
 setuptools.setup(
