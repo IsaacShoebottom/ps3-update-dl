@@ -11,7 +11,7 @@ import pkg_resources
 from http import HTTPStatus
 from functools import partial
 import xml.etree.ElementTree as et
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePath
 from dataclasses import dataclass, field
 from typing import List, Tuple, TYPE_CHECKING
 
@@ -20,13 +20,6 @@ if TYPE_CHECKING:
 
 import requests
 from tqdm import tqdm
-
-import warnings
-import urllib3.connection
-# the PS3 update server uses a funky certificate but there's nothing we can do about that
-warnings.filterwarnings('ignore', category=urllib3.connection.SubjectAltNameWarning)
-# the server also uses old ciphers, but some ciphers are better than none (issue #2)
-requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS = 'ALL:@SECLEVEL=1'
 
 class VerificationFailed(Exception):
 	"""verification of a downloaded update failed"""
@@ -43,6 +36,7 @@ else:
 session = requests.Session()
 session.verify = pkg_resources.resource_filename('ps3_update_dl', 'playstation-ca.crt')
 session.headers['User-Agent'] = f'{__name__}/{__version__} ' + session.headers['User-Agent']
+session.headers['ciphers'] = 'DEFAULT:@SECLEVEL=0'
 
 @dataclass
 class Update:
@@ -68,14 +62,15 @@ def parse_updates(tree: et.ElementTree) -> Info:
 	)
 
 def download_info(title_id: str) -> Info:
-	r = session.get(URL_FORMAT.format(id=title_id))
+	r = session.get(URL_FORMAT.format(id=title_id), verify=False)
 	r.raise_for_status()
 	try:
 		# r.content instead of r.text because the server doesn't declare an encoding, but the XML does
 		return parse_updates(et.fromstring(r.content))
 	except et.ParseError as exc:
-		print('Could not parse response. No update available?', file=sys.stderr)
-		sys.exit(2)
+		print(f'Could not parse response for title {title_id}. No update available?', file=sys.stderr)
+		raise exc
+		# sys.exit(2)
 
 def _file_size(fp: typing.io.BinaryIO) -> int:
 	old_pos = fp.tell()
@@ -106,7 +101,7 @@ def _verify_hash(fp: typing.io.BinaryIO, filename: str, update: Update) -> None:
 		sys.exit(3)
 
 def download_update(*, output_dir: Path, update: Update, overwrite=False):
-	output_path = output_dir / f'v{update.version} - {PurePosixPath(update.url).name}'
+	output_path = output_dir / f'v{update.version} - {PurePath(update.url).name}'
 	downloaded = 0
 	if output_path.is_file():
 		with open(output_path, 'rb') as f:
@@ -126,7 +121,7 @@ def download_update(*, output_dir: Path, update: Update, overwrite=False):
 		mode = 'w+b'
 
 	with open(output_path, mode) as f:
-		r = session.get(update.url, headers=headers, stream=True)
+		r = session.get(update.url, headers=headers, stream=True, verify=False)
 		if r.status_code == HTTPStatus.OK:
 			# server wants to give us the whole file
 			f.seek(0)
@@ -153,8 +148,10 @@ def download_updates(*, base_dir: Path, title_id: str, overwrite=False):
 	except requests.HTTPError:
 		print(f"Error downloading “{title_id}”. Make sure it's a valid game ID.", file=sys.stderr)
 		return
+	except et.ParseError:
+		return
 
-	output_dir = base_dir / title
+	output_dir = base_dir / title_id
 	output_dir.mkdir(exist_ok=True)
 	print(f'Downloading “{title}” [{title_id}]...', file=sys.stderr)
 	for update in updates:
